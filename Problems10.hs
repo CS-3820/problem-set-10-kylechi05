@@ -108,7 +108,10 @@ subst x m (Var y)
   | otherwise = Var y
 subst x m (Lam y n) = Lam y (substUnder x m y n)
 subst x m (App n1 n2) = App (subst x m n1) (subst x m n2)
-subst x m n = undefined
+subst x m (Store e) = Store (subst x m e)
+subst x m (Recall) = Recall
+subst x m (Throw e) = Throw (subst x m e)
+subst x m (Catch e1 s e2) = Catch (subst x m e1) s (substUnder x m s e2)
 
 {-------------------------------------------------------------------------------
 
@@ -202,7 +205,59 @@ bubble; this won't *just* be `Throw` and `Catch.
 -------------------------------------------------------------------------------}
 
 smallStep :: (Expr, Expr) -> Maybe (Expr, Expr)
-smallStep = undefined
+smallStep (Const i, acc) = Nothing
+
+smallStep ((Plus (Const x) (Const y)), acc) = Just (Const (x + y), acc)
+smallStep ((Plus (Throw e1) e2), acc) = case (smallStep (e1, acc)) of
+  (Just (e1', acc')) -> Just (Plus (Throw e1') (e2), acc')
+  Nothing -> Just (Throw e1, acc)
+smallStep ((Plus e1 (Throw e2)), acc) = case (smallStep (e1, acc)) of
+  (Just (e1', acc')) -> Just (Plus e1' (Throw e2), acc')
+  Nothing -> Just (Throw e2, acc)
+smallStep ((Plus e1 e2), acc) = case (smallStep (e1, acc), smallStep (e2, acc)) of
+  (Just (e1', acc'), _) -> Just (Plus e1' e2, acc')
+  (_, Just (e2', acc')) -> Just (Plus e1 e2', acc')
+  (_) -> Nothing
+
+smallStep (Var _, _) = Nothing
+
+smallStep (Lam _ _, _) = Nothing
+
+smallStep (App (Throw e1) e2, acc) = case (smallStep (e1, acc)) of
+  (Just (e1', acc')) -> Just (App (Throw e1') e2, acc')
+  _ -> Just (Throw e1, acc)
+smallStep (App e1 (Throw e2), acc) = case (smallStep (e1, acc)) of
+  (Just (e1', acc')) -> Just (App e1' (Throw e2), acc')
+  _ -> Just (Throw e2, acc)
+smallStep (App (Lam x e1) e2, acc) = case (smallStep (e1, acc), smallStep (e2, acc)) of
+  (_, Just (e2', acc')) -> Just (App (Lam x e1) e2', acc')
+  (_, Nothing) -> Just (subst x e2 e1, acc)
+smallStep (App e1 e2, acc) = case (smallStep (e1, acc), smallStep (e2, acc)) of
+  (Just (e1', acc'), _) -> Just (App e1' e2, acc')
+  (_, Just (e2', acc')) -> Just (App e1 e2', acc')
+  _ -> Nothing
+
+smallStep (Store (Throw e), acc) = case (smallStep (e, acc)) of
+  (Just (e', acc')) -> Just (Store (Throw e'), acc')
+  _ -> Just (Throw e, acc)
+smallStep (Store e, acc) = case (smallStep (e, acc)) of
+  (Just (e', acc)) -> Just (Store e', acc)
+  _ -> Just (e, e)
+
+smallStep (Recall, acc) = Just (acc, acc)
+
+smallStep (Throw (Throw e), acc) = Just (Throw e, acc)
+smallStep (Throw e, acc) = case (smallStep (e, acc)) of
+  (Just (e', acc')) -> Just (Throw e', acc')
+  _ -> Nothing
+
+smallStep (Catch (Throw e1) s e2, acc) = case (smallStep (e1, acc)) of
+  Just (e1', acc') -> Just (Catch (Throw e1') s e2, acc')
+  _ -> Just (subst s e1 e2, acc)
+smallStep (Catch e1 s e2, acc) = case (smallStep (e1, acc)) of
+  Just (e1', acc') -> Just (Catch e1' s e2, acc')
+  _ -> Just (e1, acc)
+
 
 steps :: (Expr, Expr) -> [(Expr, Expr)]
 steps s = case smallStep s of
